@@ -1,0 +1,331 @@
+---
+title: "Exploratory Analysis - Medical Bill"
+author: "Oscar Cassetti"
+date: "1/29/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+library(sqldf)
+library(dplyr)
+library(ggplot2)
+library(pastecs)
+```
+
+# Introduction 
+
+This notebook covers the exploratory data analysis for the raw data.
+
+# Input files
+
+I input data files are the following 
+
+1. `bill_amount.csv`   
+2. `bill_id.csv`       
+3. `clinical_data.csv` 
+4. `demographics.csv`
+
+
+```{r}
+
+billAmount <- read.csv("../data/bill_amount.csv", header=TRUE, stringsAsFactors = FALSE)
+bills <- read.csv("../data/bill_id.csv", stringsAsFactors = FALSE)
+clinicalData <- read.csv("../data/clinical_data.csv", stringsAsFactors = FALSE)
+demographics <- read.csv("../data/demographics.csv", stringsAsFactors = FALSE)
+
+```
+
+First I am going to check if all the data join correctly.
+
+First I am going to check that every bill has an ammount associated with it.
+
+```{r}
+source("eda-functions.R")
+data.frame(
+checks = c(
+"Check all bills link an amount",
+"Check all bills link to patient clinical data ",
+"Check all clinical data links to one or more bill",
+"Check all clinical data links to demographics",
+"Check all demographic data links to clinical data"
+),
+results = c(
+checkJoinSQL(
+"bills b",
+"billAmount ba",
+"b.bill_id = ba.bill_id" ,
+"ba.bill_id is null"
+),
+
+checkJoinSQL("bills b", "clinicalData c", "b.patient_id = c.id and b.date_of_admission = c.date_of_admission" , "c.id is null"),
+
+checkJoinSQL(
+"clinicalData c",
+"bills b",
+"b.patient_id = c.id" ,
+"b.patient_id is null"
+),
+
+checkJoinSQL(
+"clinicalData c",
+"demographics d",
+"d.patient_id = c.id" ,
+"d.patient_id is null"
+),
+
+checkJoinSQL(
+"demographics d",
+"clinicalData c",
+"d.patient_id = c.id" ,
+"c.id is null"
+)
+)
+)
+
+```
+
+Now data quality checks. I start with the billAmount. 
+Here I check the distibrution of the bill amount. 
+This is also useful to get a good understanding of the data
+
+```{r}
+
+billSummary <- billAmount %>% group_by(bill_id) %>% summarise(amount=sum(amount))
+knitr::kable(pastecs::stat.desc(billSummary$amount), digits = 1)
+
+ggplot(billSummary) + geom_density(aes(x=amount)) + ggtitle("Bill amount distribution")
+
+ggplot(billSummary) + geom_boxplot(aes(x="amount", y=amount)) + ggtitle("Bill amount distribution")
+
+```
+
+The amount of the bill has wide range. More dep knowlege would be required to understand if anything above 60K 
+are actually outliers.
+
+
+```{r}
+dateFormat <- "%Y-%m-%d"
+clinicalData$date_of_admission <- as.Date(clinicalData$date_of_admission, format=dateFormat)
+clinicalData$date_of_discharge <- as.Date(clinicalData$date_of_discharge, format=dateFormat)
+bills$date_of_admission <- as.Date(bills$date_of_admission, format=dateFormat)
+```
+
+Checking on dates
+
+```{r}
+ggplot(clinicalData) + geom_density(aes(x=date_of_admission)) + ggtitle("Distribustion of date of adminssion")
+
+ggplot(clinicalData) + geom_density(aes(x=date_of_discharge)) + ggtitle("Distribustion of date of discharge")
+
+ggplot(clinicalData) + geom_density(aes(x=difftime(date_of_discharge, date_of_admission, units = "day"))) +
+  xlab("Days")+ 
+  ggtitle("Patient stay")
+```
+
+```{r}
+medicalHistoryCols <-  colnames(clinicalData)[grep("medical_history_", colnames(clinicalData))]
+preopMedicationCols <- colnames(clinicalData)[grep("preop_medication_", colnames(clinicalData))]
+sympthomCols <- colnames(clinicalData)[grep("symptom", colnames(clinicalData))]
+
+medicalColVals <- reshape2::melt(clinicalData[, c("id", medicalHistoryCols)], na.rm = FALSE, id="id", vars=medicalHistoryCols)
+
+ggplot(medicalColVals) + geom_histogram(aes(x=variable, fill=factor(value)), stat = "count") + ggtitle("Data quality medical history")
+
+
+preopMedicationVals <- reshape2::melt(clinicalData[, c("id", preopMedicationCols)], na.rm = FALSE, id="id", vars=preopMedicationCols)
+
+ggplot(preopMedicationVals) + geom_histogram(aes(x=variable, fill=factor(value)), stat = "count") + ggtitle("Data quality medical preop Medications")
+
+sympthomVals <- reshape2::melt(clinicalData[, c("id", sympthomCols)], na.rm = FALSE, id="id", vars=sympthomCols)
+
+
+ggplot(sympthomVals) + geom_histogram(aes(x=variable, fill=factor(value)), stat = "count") + ggtitle("Data quality medical sympthoms")
+
+```
+
+Height and weight
+
+```{r}
+
+ggplot(clinicalData) + geom_density(aes(x=height)) + ggtitle("Height distribution")
+ggplot(clinicalData) + geom_boxplot(aes(x="height", y=height)) + ggtitle("Height distribution")
+ggplot(clinicalData) + geom_density(aes(x=weight)) + ggtitle("Weight distribution")
+ggplot(clinicalData) + geom_boxplot(aes(x="weight", y=weight)) + ggtitle("Weight distribution")
+
+ggplot(clinicalData) + geom_density(aes(x=weight/(height/100)^2))
+
+```
+
+```{r}
+clinicalDataCleaned <- clinicalData 
+
+table(clinicalData$medical_history_3)
+
+clinicalDataCleaned <- clinicalDataCleaned %>% mutate(
+  medical_history_3 = 
+    case_when(
+      medical_history_3 == "Yes" ~ 1,
+      medical_history_3 == "No" ~  0,
+      TRUE ~ as.numeric(medical_history_3)
+    )
+  )
+
+```
+
+I check that the remapping went correctly 
+
+```{r}
+table(clinicalData$medical_history_3, clinicalDataCleaned$medical_history_3)
+```
+
+Demographics 
+
+```{r}
+
+demographics$date_of_birth <- as.Date(demographics$date_of_birth, format=dateFormat)
+ggplot(demographics) + geom_density(aes(x=date_of_birth)) + ggtitle("Distribustion of date of birth")
+
+ageDf <- clinicalData %>% select(id, date_of_admission) %>% left_join(demographics, by=c("id" = "patient_id")) %>% 
+  mutate(age=as.numeric(difftime(date_of_admission, date_of_birth, units = "days")/365)) %>% select(age)
+
+
+ggplot(ageDf) + geom_density(aes(x=age)) + ggtitle("Age at time of admission") 
+
+ggplot(demographics) + geom_histogram(aes(x=gender, fill=gender), stat = "count") + ggtitle("Gender distribution")
+
+ggplot(demographics) + geom_histogram(aes(x=race, fill=race), stat = "count") + ggtitle("Race distribution")
+
+ggplot(demographics) + geom_histogram(aes(x=resident_status, fill=resident_status), stat = "count") + ggtitle("Race distribution")
+```
+
+From the graph we notice we need to remap some of the fields:
+
+```{r}
+demographicsCleaned <- demographics 
+
+
+demographicsCleaned <- demographicsCleaned %>% mutate(
+  gender = factor(
+    case_when(
+      gender == "f" ~ "Female",
+      gender == "m" ~ "Male",
+      TRUE ~ as.character(gender)
+    )
+  ),
+  race = factor(
+    case_when(
+      race == "chinese" ~ "Chinese",
+      race == "India" ~ "Indian",
+      TRUE ~ as.character(race)
+    )
+  ),
+  resident_status = factor(
+    case_when(
+      resident_status == "Singapore citizen" ~ "Singaporean",
+      TRUE ~ as.character(resident_status)
+    )
+  )
+)
+
+```
+
+We check the distribution post processing 
+
+```{r}
+ggplot(demographicsCleaned) + geom_histogram(aes(x=gender, fill=gender), stat = "count") + ggtitle("Gender distribution")
+
+ggplot(demographicsCleaned) + geom_histogram(aes(x=race, fill=race), stat = "count") + ggtitle("Race distribution")
+
+ggplot(demographicsCleaned) + geom_histogram(aes(x=resident_status, fill=resident_status), stat = "count") + ggtitle("Race distribution")
+
+
+```
+```{r}
+
+patientData <- 
+sqldf(
+sprintf( 
+"SELECT 
+%s,
+%s,
+bs.amount
+FROM
+demographicsCleaned d 
+INNER JOIN clinicalDataCleaned c 
+  ON c.id = d.patient_id
+INNER JOIN (
+SELECT 
+b.patient_id, 
+b.date_of_admission,
+SUM(ba.amount) as amount
+FROM
+ bills b 
+INNER JOIN billAmount ba ON ba.bill_id = b.bill_id 
+GROUP BY 
+b.patient_id, b.date_of_admission
+) bs ON bS.patient_id = c.id and bs.date_of_admission = c.date_of_admission
+      ", 
+paste("d.", colnames(demographicsCleaned), sep="", collapse=","), 
+paste("c.", setdiff(colnames(clinicalDataCleaned), colnames(demographicsCleaned)), sep="", collapse=",")))
+
+saveRDS(patientData, "../data/patientData.RDS")
+```
+
+```{r}
+
+patientData %>% group_by(patient_id) %>% arrange(patient_id, date_of_admission) %>%
+  mutate(days_since_last_admission = as.numeric(difftime(
+    date_of_admission,
+    lag(date_of_admission, 1, order_by = date_of_admission),
+    units = "days"
+    )),
+    days_since_last_discharge = as.numeric(difftime(
+    date_of_discharge,
+    lag(date_of_admission, 1, order_by = date_of_admission),
+    units = "days"
+    )),
+    weight_change = weight - lag(weight, 1, order_by= date_of_admission)
+    )
+  
+```
+
+```{r}
+patientData$bmi <- patientData$weight / (patientData$height / 100)^2
+patientData$age <- as.numeric(difftime(patientData$date_of_admission, patientData$date_of_admission, units = "days")) /365
+
+patientData$lofs <- as.numeric(difftime(patientData$date_of_discharge, patientData$date_of_admission, units = "days"))
+
+patientData$date_of_admissionYear <- as.numeric(strftime(patientData$date_of_admission, "%Y"))
+
+for (i in c(medicalHistoryCols, sympthomCols, preopMedicationCols)){
+patientData[, i] <- factor(patientData[,i])
+}
+
+training <- subset(patientData, amount > 10000 & amount < 40000) 
+
+tree <- rpart::rpart(amount~., data=training[, -grep("id$", colnames(patientData))], 
+                     control = rpart::rpart.control(minsplit = 10, cp = 0.005) 
+                     )
+
+rpart::plotcp(tree)
+
+plot(tree)
+text(tree)
+
+summary(tree)
+
+x <- predict(tree, training[, -grep("id$", colnames(patientData))]) - training[, 'amount']
+hist(x)
+
+fitlm <- lm(amount~.+0, data=training[, -grep("id$", colnames(patientData))])
+
+quantile(patientData$amount)
+
+#Hmisc::rcorr( model.matrix(amount~. ,patientData[, -grep("id$", colnames(patientData))]))
+
+plot(fitlm)
+summary(fitlm)
+```
