@@ -122,7 +122,7 @@ ggplot(clinicalData) + geom_density(aes(x=date_of_discharge)) + ggtitle("Distrib
 
 ggplot(clinicalData) + geom_density(aes(x=difftime(date_of_discharge, date_of_admission, units = "day"))) +
   xlab("Days")+ 
-  ggtitle("Patient stay")
+  ggtitle("Patient length of stay")
 ```
 
 ```{r}
@@ -132,17 +132,27 @@ sympthomCols <- colnames(clinicalData)[grep("symptom", colnames(clinicalData))]
 
 medicalColVals <- reshape2::melt(clinicalData[, c("id", medicalHistoryCols)], na.rm = FALSE, id="id", vars=medicalHistoryCols)
 
+medicalColVals$variable <- gsub("medical_history", "med_hist", medicalColVals$variable)
+
 ggplot(medicalColVals) + geom_histogram(aes(x=variable, fill=factor(value)), stat = "count") + ggtitle("Data quality medical history")
 
 
 preopMedicationVals <- reshape2::melt(clinicalData[, c("id", preopMedicationCols)], na.rm = FALSE, id="id", vars=preopMedicationCols)
+preopMedicationVals$variable <- gsub("preop_medication", "pom", preopMedicationVals$variable)
 
-ggplot(preopMedicationVals) + geom_histogram(aes(x=variable, fill=factor(value)), stat = "count") + ggtitle("Data quality medical preop Medications")
+ggplot(preopMedicationVals) + geom_histogram(aes(x=variable, fill=factor(value)), stat = "count") + ggtitle("Data quality medical preop Medications") 
 
 sympthomVals <- reshape2::melt(clinicalData[, c("id", sympthomCols)], na.rm = FALSE, id="id", vars=sympthomCols)
 
 
 ggplot(sympthomVals) + geom_histogram(aes(x=variable, fill=factor(value)), stat = "count") + ggtitle("Data quality medical sympthoms")
+
+
+medicalColValsCleaned <- reshape2::melt(clinicalDataCleaned[, c("id", medicalHistoryCols)], na.rm = FALSE, id="id", vars=medicalHistoryCols)
+
+medicalColValsCleaned$variable <- gsub("medical_history", "med_hist", medicalColValsCleaned$variable)
+
+ggplot(medicalColValsCleaned) + geom_histogram(aes(x=variable, fill=factor(value)), stat = "count") + ggtitle("Data quality medical history")
 
 ```
 
@@ -155,7 +165,7 @@ ggplot(clinicalData) + geom_boxplot(aes(x="height", y=height)) + ggtitle("Height
 ggplot(clinicalData) + geom_density(aes(x=weight)) + ggtitle("Weight distribution")
 ggplot(clinicalData) + geom_boxplot(aes(x="weight", y=weight)) + ggtitle("Weight distribution")
 
-ggplot(clinicalData) + geom_density(aes(x=weight/(height/100)^2))
+ggplot(clinicalData) + geom_density(aes(x=weight/(height/100)^2)) + ggtitle("BMI distribution")
 
 ```
 
@@ -198,7 +208,7 @@ ggplot(demographics) + geom_histogram(aes(x=gender, fill=gender), stat = "count"
 
 ggplot(demographics) + geom_histogram(aes(x=race, fill=race), stat = "count") + ggtitle("Race distribution")
 
-ggplot(demographics) + geom_histogram(aes(x=resident_status, fill=resident_status), stat = "count") + ggtitle("Race distribution")
+ggplot(demographics) + geom_histogram(aes(x=resident_status, fill=resident_status), stat = "count") + ggtitle("Resident status distribution")
 ```
 
 From the graph we notice we need to remap some of the fields:
@@ -271,45 +281,124 @@ b.patient_id, b.date_of_admission
 paste("d.", colnames(demographicsCleaned), sep="", collapse=","), 
 paste("c.", setdiff(colnames(clinicalDataCleaned), colnames(demographicsCleaned)), sep="", collapse=",")))
 
-saveRDS(patientData, "../data/patientData.RDS")
 ```
 
 ```{r}
 
-patientData %>% group_by(patient_id) %>% arrange(patient_id, date_of_admission) %>%
-  mutate(days_since_last_admission = as.numeric(difftime(
-    date_of_admission,
-    lag(date_of_admission, 1, order_by = date_of_admission),
-    units = "days"
-    )),
-    days_since_last_discharge = as.numeric(difftime(
-    date_of_discharge,
-    lag(date_of_admission, 1, order_by = date_of_admission),
-    units = "days"
-    )),
-    weight_change = weight - lag(weight, 1, order_by= date_of_admission)
-    )
+patientData <-
+  patientData %>% group_by(patient_id) %>% arrange(patient_id, date_of_admission) %>%
+  mutate(
+  days_since_last_admission = as.numeric(difftime(
+  date_of_admission,
+  lag(date_of_admission, 1, order_by = date_of_admission),
+  units = "days"
+  )),
+  days_since_last_discharge = as.numeric(difftime(
+  date_of_discharge,
+  lag(date_of_admission, 1, order_by = date_of_admission),
+  units = "days"
+  )),
+  weight_change = weight - lag(weight, 1, order_by = date_of_admission)
+  ) %>% mutate(
+  weight_change = if_else(is.na(weight_change), -1, weight_change),
+  days_since_last_discharge = if_else(
+  is.na(days_since_last_discharge),-1,
+  days_since_last_discharge
+  ),
+  days_since_last_admission = if_else(
+  is.na(days_since_last_admission),-1,
+  days_since_last_admission
+  )
+  )
+
+patientDataCounts <-
+  patientData %>% group_by(date_of_admission) %>% summarise(t_admission =
+  length(patient_id)) %>% arrange(date_of_admission) %>% mutate(
+  t_admission_1 = lag(t_admission, 1, order_by = date_of_admission),
+  t_admission_2 = lag(t_admission, 2, order_by = date_of_admission),
+  t_admission_7 =
+  lag(t_admission, 7, order_by = date_of_admission)
+  )
   
+for(i in 3:5){
+  idx <- which(is.na(patientDataCounts[,i]))
+  patientDataCounts[idx,i] <- -1  
+}
+
+patientData <- patientData %>% group_by(patient_id) %>% mutate(n_admission=1) %>%arrange(patient_id,date_of_admission) %>% mutate(n_admission_csum=cumsum(n_admission))
+
+patientData <- patientData %>% left_join(patientDataCounts, by="date_of_admission") 
 ```
 
 ```{r}
+patientData <- as.data.frame(patientData)  
 patientData$bmi <- patientData$weight / (patientData$height / 100)^2
-patientData$age <- as.numeric(difftime(patientData$date_of_admission, patientData$date_of_admission, units = "days")) /365
+patientData$age <- as.numeric(difftime(patientData$date_of_admission, patientData$date_of_birth, units = "days")) /365
 
 patientData$lofs <- as.numeric(difftime(patientData$date_of_discharge, patientData$date_of_admission, units = "days"))
 
 patientData$date_of_admissionYear <- as.numeric(strftime(patientData$date_of_admission, "%Y"))
+patientData$date_of_admissionMonth <- as.numeric(strftime(patientData$date_of_admission, "%m"))
+patientData$date_of_birthYear <- as.numeric(strftime(patientData$date_of_birth, "%Y"))
 
 for (i in c(medicalHistoryCols, sympthomCols, preopMedicationCols)){
 patientData[, i] <- factor(patientData[,i])
 }
 
-training <- subset(patientData, amount > 10000 & amount < 40000) 
+
+saveRDS(patientData, "../data/patientData.RDS")
+
+
+```
+```{r}
+ggplot(patientData) + geom_density(aes(x=amount))  
+
+IQR(patientData$amount)
+quantile(patientData$amount)
+spending_level <- cut(patientData$amount, c(0, 50000, 70000, 100000), include.lowest = TRUE, labels = 
+c( '[0, 27,0000)', '[27,000, 70,000)' , '[70,000, 100,000]' ))
+ggplot(patientData) +  geom_density(aes(x=amount, fill=spending_level)) + ggtitle("Density estimates for various bill amounts")
+```
+
+```{r}
+
+library(randomForest)
+library(caret)
+
+fitControl <- trainControl(
+  method = "repeatedcv",
+  number = 10,
+  repeats = 5,
+  classProbs = TRUE,
+  #selectionFunction = "oneSE"
+  selectionFunction = "tolerance",
+  verboseIter = TRUE,
+  summaryFunction = defaultSummary
+  )
+
+fitRF <-  train(
+  amount~.,
+  data=patientData[complete.cases(patientData),  -grep("id$", colnames(patientData))],
+  trControl = fitControl,
+  metric = "RMSE",
+  #nTrain = 0.5,
+  nodesize = 2,
+  #importance=TRUE,
+  ntree = 500,
+  do.trace = FALSE,
+  verbose = FALSE
+
+  )
+saveRDS(fitRF, "fitRf.RDS")
+summary(fitRF)
+varImpPlot(fitRF$finalModel)
+
 
 tree <- rpart::rpart(amount~., data=training[, -grep("id$", colnames(patientData))], 
-                     control = rpart::rpart.control(minsplit = 10, cp = 0.005) 
+                     control = rpart::rpart.control(minsplit = 20, cp = 0.005) 
                      )
 
+str(training)
 rpart::plotcp(tree)
 
 plot(tree)
