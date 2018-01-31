@@ -355,66 +355,124 @@ ggplot(patientData) + geom_density(aes(x=amount))
 
 IQR(patientData$amount)
 quantile(patientData$amount)
-spending_level <- cut(patientData$amount, c(0, 50000, 70000, 100000), include.lowest = TRUE, labels = 
-c( '[0, 27,0000)', '[27,000, 70,000)' , '[70,000, 100,000]' ))
+spending_level <- cut(patientData$amount, c(0, 40000, 100000), include.lowest = TRUE, labels = 
+c( '[0, 40,000)', '[40,000, 100,000]' ))
 ggplot(patientData) +  geom_density(aes(x=amount, fill=spending_level)) + ggtitle("Density estimates for various bill amounts")
+
 ```
 
 ```{r}
 
-library(randomForest)
-library(caret)
-
-fitControl <- trainControl(
-  method = "repeatedcv",
-  number = 10,
-  repeats = 5,
-  classProbs = TRUE,
-  #selectionFunction = "oneSE"
-  selectionFunction = "tolerance",
-  verboseIter = TRUE,
-  summaryFunction = defaultSummary
-  )
-
-fitRF <-  train(
-  amount~.,
-  data=patientData[complete.cases(patientData),  -grep("id$", colnames(patientData))],
-  trControl = fitControl,
-  metric = "RMSE",
-  #nTrain = 0.5,
-  nodesize = 2,
-  #importance=TRUE,
-  ntree = 500,
-  do.trace = FALSE,
-  verbose = FALSE
-
-  )
-saveRDS(fitRF, "fitRf.RDS")
+# library(randomForest)
+# library(caret)
+# 
+# fitControl <- trainControl(
+#   method = "repeatedcv",
+#   number = 10,
+#   repeats = 5,
+#   classProbs = TRUE,
+#   #selectionFunction = "oneSE"
+#   selectionFunction = "tolerance",
+#   verboseIter = TRUE,
+#   summaryFunction = defaultSummary
+#   )
+# 
+# fitRF <-  train(
+#   amount~.,
+#   data=patientData[complete.cases(patientData),  -grep("id$", colnames(patientData))],
+#   trControl = fitControl,
+#   metric = "RMSE",
+#   #nTrain = 0.5,
+#   nodesize = 2,
+#   #importance=TRUE,
+#   ntree = 500,
+#   do.trace = FALSE,
+#   verbose = FALSE
+# 
+#   )
+# saveRDS(fitRF, "fitRf.RDS")
 summary(fitRF)
-varImpPlot(fitRF$finalModel)
+varImpPlot(fitRF$finalModel, main = "Variable importance")
 
 
-tree <- rpart::rpart(amount~., data=training[, -grep("id$", colnames(patientData))], 
-                     control = rpart::rpart.control(minsplit = 20, cp = 0.005) 
-                     )
+varSelection <- c("symptom_5", "race", "resident_status", "age", "medical_history_1", "date_of_birth", "weight", "symptom_3", "symptom_2", "symptom_4", "date_of_birthYear", "lab_result_2", "lab_result_1", "lab_result_3" , "symptom_1", "height", "lofs", "date_of_admissionMonth", "medical_history_7", "preop_medication_6", "t_admission_7", "t_admission", "t_admission_2", "t_admission_1", "amount" )
+```
 
-str(training)
-rpart::plotcp(tree)
+```{r}
+#training <- 
+setdiff(varSelection, colnames(patientData))
 
-plot(tree)
-text(tree)
+nrow(patientData[patientData$amount > 40000, varSelection])
 
-summary(tree)
+training <- patientData[patientData$amount < 40000, varSelection]
+training <- training[order(training$amount),]
 
-x <- predict(tree, training[, -grep("id$", colnames(patientData))]) - training[, 'amount']
+fitLR <- lm(amount~.+0, data=training)
+summary(fitLR)
+
+plot(fitLR)
+
+fitTree <- rpart::rpart(amount~., data=training)
+x <- predict(fitTree, data=training) - training[, 'amount']
 hist(x)
 
-fitlm <- lm(amount~.+0, data=training[, -grep("id$", colnames(patientData))])
+x <- predict(fitLR, training) - training[, 'amount']
+hist(x)
 
-quantile(patientData$amount)
+summaryFitLR <-summary(fitLR)
 
-#Hmisc::rcorr( model.matrix(amount~. ,patientData[, -grep("id$", colnames(patientData))]))
+coefficients <- summaryFitLR$coefficients[summaryFitLR$coefficients[,4] < 0.005, ]
 
-plot(fitlm)
-summary(fitlm)
+coefficients[order(-abs(coefficients[,1])),]
+
+knitr::kable(coefficients[order(-abs(coefficients[,1])),], digits = 4)
+
+
+training <- patientData[patientData$amount >= 40000, varSelection]
+training <- training[order(training$amount),]
+
+fitLR <- lm(amount~.+0, data=training)
+
+x <- predict(fitLR, training) - training[, 'amount']
+hist(x)
+plot(fitLR)
+
+summaryFitLR <-summary(fitLR)
+
+
+coefficients <- summaryFitLR$coefficients[summaryFitLR$coefficients[,4] < 0.005, ]
+
+coefficients[order(-abs(coefficients[,1])),]
+
+knitr::kable(coefficients[order(-abs(coefficients[,1])),], digits = 4)
+
+
+
+```
+
+```{r}
+
+ggplot(patientData) + geom_point(aes(x=amount ,y=if_else(amount<40000, 119*weight, 292*weight), colour=amount<40000)) + xlab("Amount") + ggtitle("Weight and Amount relation ", subtitle = "if(amount<40000) then 119*weight else 292*weight") + scale_x_continuous(labels = c())
+
+
+ggplot(patientData) + geom_point(aes(x=if_else(amount<40000, -22*height, -153*height) ,y=log(amount), colour=amount<40000)) + xlab("Height equation") + ggtitle("Weight and Amount relation ", subtitle = "if(amount<40000) then -22*height else -153*height") + scale_x_continuous(labels = c())
+
+
+ggplot(patientData) + geom_point(aes(x=weight ,y=log(amount /weight), colour=amount<40000)) +
+  ggtitle("Weight and Amount relation ", subtitle = "Log ratio")
+
+ggplot(patientData) + geom_point(aes(x=height ,y=log(amount/height), colour=amount<40000)) +
+  ggtitle("Height and Amount relation ", subtitle = "Log ratio")
+ 
+ggplot(patientData[patientData$amount < 40000,]) + geom_point(aes(x=age ,y=log(age)/log(amount))) +
+  ggtitle("Age and Amount relation ", subtitle = "Log scale ratios")
+
+library(alluvial)
+
+tmpData <-patientData %>% filter(amount < 40000) %>% select(resident_status, race, medical_history_1, medical_history_7, symptom_1, symptom_2, symptom_3, symptom_4, preop_medication_6, amount) %>% group_by(resident_status, race, medical_history_1, medical_history_7, symptom_1, symptom_2, symptom_3, symptom_4, preop_medication_6) %>% summarise(amount_band=round(mean(amount)/5000,0), n=length(amount))
+
+par(mar=c(0,5,2,1))
+alluvial::alluvial(tmpData[, -11], freq=tmpData$n, gap.width=0.01, col= "red", border="white", cex=1, cex.axis = 1, cw = 0.2) 
+title("Interaction graph of categorical variable and amount braket")
+
 ```
